@@ -1,0 +1,1 @@
+## This is GAIT Project on Sign Language Intepreter AI integrated

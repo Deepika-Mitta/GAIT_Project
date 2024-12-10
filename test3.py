@@ -177,41 +177,66 @@ class ASLWordPredictor:
                        (10, 350 + i*40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
         
         return frame
-    
+
+
+
+class GestureDetector:
+    def __init__(self):
+        self.mp_hands = mp.solutions.hands
+        self.hands = self.mp_hands.Hands(min_detection_confidence=0.7, min_tracking_confidence=0.7)
+        self.last_gesture_time = 0  # Timestamp of the last detected gesture
+        self.cooldown = 1.0  # Cooldown time in seconds
+
+    def detect_gesture(self, frame):
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = self.hands.process(rgb_frame)
+
+        if results.multi_hand_landmarks:
+            for hand_landmarks in results.multi_hand_landmarks:
+                thumb_tip = hand_landmarks.landmark[self.mp_hands.HandLandmark.THUMB_TIP]
+                index_tip = hand_landmarks.landmark[self.mp_hands.HandLandmark.INDEX_FINGER_TIP]
+                wrist = hand_landmarks.landmark[self.mp_hands.HandLandmark.WRIST]
+
+                # Thumbs up
+                if thumb_tip.y < wrist.y and thumb_tip.y < index_tip.y:
+                    if time.time() - self.last_gesture_time > self.cooldown:
+                        self.last_gesture_time = time.time()
+                        return "thumbs_up"
+
+                # Thumbs down
+                if thumb_tip.y > wrist.y and thumb_tip.y > index_tip.y:
+                    if time.time() - self.last_gesture_time > self.cooldown:
+                        self.last_gesture_time = time.time()
+                        return "thumbs_down"
+
+        return None
+
+
 def main():
-    # Replace with your Hugging Face token
-    HUGGINGFACE_TOKEN = "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"
-    
-    try:
-        predictor = ASLWordPredictor(HUGGINGFACE_TOKEN)
-        cap = cv2.VideoCapture(0)
-        
-        while cap.isOpened():
-            success, frame = cap.read()
-            if not success:
-                continue
-                
-            frame = predictor.process_frame(frame)
-            cv2.imshow('ASL Word Prediction', frame)
-            
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'):
-                break
-            elif key == ord('c'):  # Clear buffer
-                predictor.letter_buffer = []
-                predictor.suggestions = []
-            elif key == ord(' '):  # Space to accept word
-                if predictor.suggestions:
-                    predictor.current_word = predictor.suggestions[0]
-                    print(f"Accepted word: {predictor.current_word}")
-                    predictor.letter_buffer = []
-                    predictor.suggestions = []
-                
-        cap.release()
-        cv2.destroyAllWindows()
-        
-    except Exception as e:
-        print(f"An error occurred: {e}")
+    cap = cv2.VideoCapture(0)
+    detector = GestureDetector()
+
+    while cap.isOpened():
+        success, frame = cap.read()
+        if not success:
+            break
+
+        gesture = detector.detect_gesture(frame)
+        if gesture:
+            print(f"Detected Gesture: {gesture}")
+
+        # Display the frame
+        cv2.putText(frame, f"Gesture: {gesture if gesture else 'None'}",
+                    (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        cv2.imshow('Thumbs Gesture Detection', frame)
+
+        # Exit on pressing 'q'
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
 
 if __name__ == "__main__":
     main()

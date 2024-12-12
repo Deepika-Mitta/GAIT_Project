@@ -14,7 +14,7 @@ audio = client.generate(
     )
 )
 
-#play(audio)
+play(audio)
 
 save(audio, "output_audio.mp3")
 

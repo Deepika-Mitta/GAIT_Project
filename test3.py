@@ -137,36 +137,100 @@ class LlamaPredictor:
 class ASLWordPredictor:
     def __init__(self, token):
         self.detector = ASLDetector()
+        self.detector = ASLDetector()
         self.letter_buffer = []
         self.current_word = ""
         self.suggestions = []
         self.last_detection_time = time.time()
         self.detection_cooldown = 1.5
+        self.stable_pose_duration = 1.0  # Time required for stable pose
+        self.last_stable_pose = None
+        self.stable_pose_start_time = None
         print("Initializing Llama model...")
         self.llama = LlamaPredictor(token)
         print("Model initialization complete")
+
+    def is_pose_stable(self, current_letter):
+        
+        current_time = time.time()
+        
+        # If pose changed, reset stability timer
+        if current_letter != self.last_stable_pose:
+            self.last_stable_pose = current_letter
+            self.stable_pose_start_time = current_time
+            return False
+        
+        # Check if pose has been held for long enough
+        if self.stable_pose_start_time is None:
+            self.stable_pose_start_time = current_time
+            return False
+            
+        return (current_time - self.stable_pose_start_time) >= self.stable_pose_duration
         
     def process_frame(self, frame):
+        # frame = self.detector.process_frame(frame)
+        # current_time = time.time()
+        
+        # if self.detector.current_letter:
+        #     if current_time - self.last_detection_time > self.detection_cooldown:
+        #         new_letter = self.detector.current_letter
+        #         print(f"Detected letter: {new_letter}")
+                
+        #         # Only add if it's a new letter or buffer is empty
+        #         if not self.letter_buffer or new_letter != self.letter_buffer[-1]:
+        #             self.letter_buffer.append(new_letter)
+        #             print(f"Current buffer: {''.join(self.letter_buffer)}")
+        #             self.last_detection_time = current_time
+                    
+        #             print("Requesting suggestions...")
+        #             try:
+        #                 self.suggestions = self.llama.get_suggestions(self.letter_buffer)
+        #                 print(f"Received suggestions: {self.suggestions}")
+        #             except Exception as e:
+        #                 print(f"Error getting suggestions: {e}")
+        
+        # # Display buffer and suggestions
+        # buffer_text = f"Letters: {''.join(self.letter_buffer)}"
+        # cv2.putText(frame, buffer_text, (10, 300), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        
+        # for i, suggestion in enumerate(self.suggestions):
+        #     cv2.putText(frame, f"Suggestion {i+1}: {suggestion}", 
+        #                (10, 350 + i*40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+        
+        # return frame
         frame = self.detector.process_frame(frame)
         current_time = time.time()
         
         if self.detector.current_letter:
-            if current_time - self.last_detection_time > self.detection_cooldown:
-                new_letter = self.detector.current_letter
-                print(f"Detected letter: {new_letter}")
+            # Add visual feedback for pose stability
+            if self.stable_pose_start_time is not None:
+                stability_progress = min(1.0, (current_time - self.stable_pose_start_time) / self.stable_pose_duration)
+                progress_width = int(200 * stability_progress)
+                cv2.rectangle(frame, (10, 270), (210, 290), (0, 0, 255), 2)
+                cv2.rectangle(frame, (10, 270), (10 + progress_width, 290), (0, 255, 0), -1)
                 
-                # Only add if it's a new letter or buffer is empty
-                if not self.letter_buffer or new_letter != self.letter_buffer[-1]:
-                    self.letter_buffer.append(new_letter)
-                    print(f"Current buffer: {''.join(self.letter_buffer)}")
-                    self.last_detection_time = current_time
+            # Only process letter if pose is stable
+            if self.is_pose_stable(self.detector.current_letter):
+                if current_time - self.last_detection_time > self.detection_cooldown:
+                    new_letter = self.detector.current_letter
+                    print(f"Detected letter: {new_letter}")
                     
-                    print("Requesting suggestions...")
-                    try:
-                        self.suggestions = self.llama.get_suggestions(self.letter_buffer)
-                        print(f"Received suggestions: {self.suggestions}")
-                    except Exception as e:
-                        print(f"Error getting suggestions: {e}")
+                    # Only add if it's a new letter or buffer is empty
+                    if not self.letter_buffer or new_letter != self.letter_buffer[-1]:
+                        self.letter_buffer.append(new_letter)
+                        print(f"Current buffer: {''.join(self.letter_buffer)}")
+                        self.last_detection_time = current_time
+                        
+                        print("Requesting suggestions...")
+                        try:
+                            self.suggestions = self.llama.get_suggestions(self.letter_buffer)
+                            print(f"Received suggestions: {self.suggestions}")
+                        except Exception as e:
+                            print(f"Error getting suggestions: {e}")
+        else:
+            # Reset stability tracking when no letter is detected
+            self.last_stable_pose = None
+            self.stable_pose_start_time = None
         
         # Display buffer and suggestions
         buffer_text = f"Letters: {''.join(self.letter_buffer)}"
@@ -177,66 +241,41 @@ class ASLWordPredictor:
                        (10, 350 + i*40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
         
         return frame
-
-
-
-class GestureDetector:
-    def __init__(self):
-        self.mp_hands = mp.solutions.hands
-        self.hands = self.mp_hands.Hands(min_detection_confidence=0.7, min_tracking_confidence=0.7)
-        self.last_gesture_time = 0  # Timestamp of the last detected gesture
-        self.cooldown = 1.0  # Cooldown time in seconds
-
-    def detect_gesture(self, frame):
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = self.hands.process(rgb_frame)
-
-        if results.multi_hand_landmarks:
-            for hand_landmarks in results.multi_hand_landmarks:
-                thumb_tip = hand_landmarks.landmark[self.mp_hands.HandLandmark.THUMB_TIP]
-                index_tip = hand_landmarks.landmark[self.mp_hands.HandLandmark.INDEX_FINGER_TIP]
-                wrist = hand_landmarks.landmark[self.mp_hands.HandLandmark.WRIST]
-
-                # Thumbs up
-                if thumb_tip.y < wrist.y and thumb_tip.y < index_tip.y:
-                    if time.time() - self.last_gesture_time > self.cooldown:
-                        self.last_gesture_time = time.time()
-                        return "thumbs_up"
-
-                # Thumbs down
-                if thumb_tip.y > wrist.y and thumb_tip.y > index_tip.y:
-                    if time.time() - self.last_gesture_time > self.cooldown:
-                        self.last_gesture_time = time.time()
-                        return "thumbs_down"
-
-        return None
-
-
+    
 def main():
-    cap = cv2.VideoCapture(0)
-    detector = GestureDetector()
-
-    while cap.isOpened():
-        success, frame = cap.read()
-        if not success:
-            break
-
-        gesture = detector.detect_gesture(frame)
-        if gesture:
-            print(f"Detected Gesture: {gesture}")
-
-        # Display the frame
-        cv2.putText(frame, f"Gesture: {gesture if gesture else 'None'}",
-                    (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        cv2.imshow('Thumbs Gesture Detection', frame)
-
-        # Exit on pressing 'q'
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    cap.release()
-    cv2.destroyAllWindows()
-
+    # Replace with your Hugging Face token
+    HUGGINGFACE_TOKEN = "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"
+    
+    try:
+        predictor = ASLWordPredictor(HUGGINGFACE_TOKEN)
+        cap = cv2.VideoCapture(0)
+        
+        while cap.isOpened():
+            success, frame = cap.read()
+            if not success:
+                continue
+                
+            frame = predictor.process_frame(frame)
+            cv2.imshow('ASL Word Prediction', frame)
+            
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
+                break
+            elif key == ord('c'):  # Clear buffer
+                predictor.letter_buffer = []
+                predictor.suggestions = []
+            elif key == ord(' '):  # Space to accept word
+                if predictor.suggestions:
+                    predictor.current_word = predictor.suggestions[0]
+                    print(f"Accepted word: {predictor.current_word}")
+                    predictor.letter_buffer = []
+                    predictor.suggestions = []
+                
+        cap.release()
+        cv2.destroyAllWindows()
+        
+    except Exception as e:
+        print(f"An error occurred: {e}")
 
 if __name__ == "__main__":
     main()

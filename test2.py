@@ -7,6 +7,9 @@ import time
 from huggingface_hub import login
 from test import ASLDetector
 
+from joblib import load
+from collections import deque
+import statistics
 # class LlamaPredictor:
 #     def __init__(self, token):
 #         # Login to Hugging Face with your token
@@ -134,48 +137,60 @@ class LlamaPredictor:
             return []
         
 
-class ASLWordPredictor:
-    def __init__(self, token):
-        self.detector = ASLDetector()
-        self.letter_buffer = []
-        self.current_word = ""
-        self.suggestions = []
-        self.last_detection_time = time.time()
-        self.detection_cooldown = 1.5
-        print("Initializing Llama model...")
-        self.llama = LlamaPredictor(token)
-        print("Model initialization complete")
-        
+class ASLAlphabetDetector:
+    def __init__(self):
+        self.model = load('alphabet_model.joblib')
+        self.mp_hands = mp.solutions.hands
+        self.mp_drawing = mp.solutions.drawing_utils
+        self.mp_drawing_styles = mp.solutions.drawing_styles
+        self.hands = self.mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.5)
+        self.prediction_window = deque(maxlen=10)
+        self.current_letter = None
+
     def process_frame(self, frame):
-        frame = self.detector.process_frame(frame)
-        current_time = time.time()
-        
-        if self.detector.current_letter:
-            if current_time - self.last_detection_time > self.detection_cooldown:
-                new_letter = self.detector.current_letter
-                print(f"Detected letter: {new_letter}")
-                
-                # Only add if it's a new letter or buffer is empty
-                if not self.letter_buffer or new_letter != self.letter_buffer[-1]:
-                    self.letter_buffer.append(new_letter)
-                    print(f"Current buffer: {''.join(self.letter_buffer)}")
-                    self.last_detection_time = current_time
-                    
-                    print("Requesting suggestions...")
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = self.hands.process(frame_rgb)
+
+        if results.multi_hand_landmarks:
+            for hand_landmarks in results.multi_hand_landmarks:
+                # Extract and normalize landmarks
+                data_aux = []
+                x_ = [lm.x for lm in hand_landmarks.landmark]
+                y_ = [lm.y for lm in hand_landmarks.landmark]
+
+                box_width = max(x_) - min(x_)
+                box_height = max(y_) - min(y_)
+
+                if box_width > 0 and box_height > 0:
+                    for lm in hand_landmarks.landmark:
+                        data_aux.append((lm.x - min(x_)) / box_width)
+                        data_aux.append((lm.y - min(y_)) / box_height)
+
+                    # Make prediction
+                    prediction = self.model.predict([np.asarray(data_aux)])
+                    predicted_character = prediction[0].upper()
+
+                    # Add prediction to the sliding window
+                    self.prediction_window.append(predicted_character)
+
+                    # Stabilize prediction using the most frequent value in the window
                     try:
-                        self.suggestions = self.llama.get_suggestions(self.letter_buffer)
-                        print(f"Received suggestions: {self.suggestions}")
-                    except Exception as e:
-                        print(f"Error getting suggestions: {e}")
-        
-        # Display buffer and suggestions
-        buffer_text = f"Letters: {''.join(self.letter_buffer)}"
-        cv2.putText(frame, buffer_text, (10, 300), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        
-        for i, suggestion in enumerate(self.suggestions):
-            cv2.putText(frame, f"Suggestion {i+1}: {suggestion}", 
-                       (10, 350 + i*40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-        
+                        self.current_letter = statistics.mode(self.prediction_window)
+                    except statistics.StatisticsError:
+                        # If no unique mode, use the most recent prediction
+                        self.current_letter = predicted_character
+
+                # Draw hand landmarks
+                self.mp_drawing.draw_landmarks(
+                    frame, 
+                    hand_landmarks, 
+                    self.mp_hands.HAND_CONNECTIONS,
+                    self.mp_drawing_styles.get_default_hand_landmarks_style(),
+                    self.mp_drawing_styles.get_default_hand_connections_style()
+                )
+        else:
+            self.current_letter = None
+
         return frame
     
 def main():
@@ -183,7 +198,7 @@ def main():
     HUGGINGFACE_TOKEN = "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"
     
     try:
-        predictor = ASLWordPredictor(HUGGINGFACE_TOKEN)
+        predictor = ASLAlphabetDetector(HUGGINGFACE_TOKEN)
         cap = cv2.VideoCapture(0)
         
         while cap.isOpened():

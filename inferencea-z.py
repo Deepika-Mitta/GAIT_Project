@@ -75,7 +75,6 @@ while True:
     # Exit on pressing 'Esc'
     if cv2.waitKey(10) & 0xFF == 27:
         break
-
 # Release resources
 cap.release()
 cv2.destroyAllWindows()

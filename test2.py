@@ -4,7 +4,6 @@ import numpy as np
 import torch
 import time
 from huggingface_hub import login
-from test import ASLDetector
 
 from joblib import load
 from collections import deque
@@ -20,6 +19,12 @@ class ASLAlphabetDetector:
         self.hands = self.mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.5)
         self.prediction_window = deque(maxlen=10)
         self.current_letter = None
+
+    def reset_detection_state(self):
+        """Reset current letter and prediction window."""
+        self.current_letter = None
+        self.prediction_window.clear()
+        # print("Detection state reset.")
 
     def process_frame(self, frame):
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -69,10 +74,10 @@ class ASLAlphabetDetector:
     
 def main():
     # Replace with your Hugging Face token
-    HUGGINGFACE_TOKEN = "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"
+    # HUGGINGFACE_TOKEN = "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"
     
     try:
-        predictor = ASLAlphabetDetector(HUGGINGFACE_TOKEN)
+        predictor = ASLAlphabetDetector()
         cap = cv2.VideoCapture(0)
         
         while cap.isOpened():

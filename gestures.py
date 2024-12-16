@@ -67,6 +67,8 @@ class ASLWordPredictor:
         self.target_word_count = 3
         self.should_exit = False
         self.sentence_played = False
+        self.new_word_started = True
+        self.sentence = ""
         
         # Suggestion handling
         self.current_suggestions = []
@@ -88,6 +90,12 @@ class ASLWordPredictor:
         self.voice_id = "nPczCjzI2devNBz1zQrb"
         set_api_key(self.tts_api_key)
 
+    def reset_letter_buffer(self):
+        """Resets the letter buffer."""
+        self.letter_buffer = []
+        self.detector.reset_detection_state()
+        # print("Letter buffer reset for new word.")
+
     def get_new_suggestions(self, prefix):
         """Get suggestions excluding previously rejected ones"""
         try:
@@ -102,13 +110,16 @@ class ASLWordPredictor:
     def process_frame(self, frame):
         try:
             current_time = time.time()
-            
+
             # Show collection progress
             cv2.putText(frame, f"Collecting word {len(self.collected_words) + 1}/{self.target_word_count}", 
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
 
             if self.current_state == "LETTER_DETECTION":
-                # Process frame for letter detection
+                
+                if len(self.collected_words) > 0 and not self.letter_buffer:
+                    self.reset_letter_buffer()
+
                 frame = self.detector.process_frame(frame)
                 detected_letter = self.detector.current_letter
 
@@ -205,17 +216,24 @@ class ASLWordPredictor:
                 if self.current_suggestions:
                     self.current_state = "GESTURE_DETECTION"
 
+        # elif len(self.letter_buffer) == 1 and len(self.collected_words) > 0:
+        #     # Clear letter buffer for new word to ensure no automatic carry-over
+        #     self.letter_buffer = []
+
     def handle_gesture(self, gesture):
         if gesture == "thumbs_up":
             if len(self.current_suggestions) == 1:
                 self.complete_word(self.current_suggestions[0])
+                self.letter_buffer = []
             else:
                 self.possible_words = self.current_suggestions
                 self.waiting_for_next_letter = True
-                self.current_state = "LETTER_DETECTION"
+                self.current_state = "LETTER_DETECTION"  
+                self.new_word_started = True              
         elif gesture == "thumbs_down":
             self.rejected_suggestions.update(self.current_suggestions)
-            self.letter_buffer = []
+            self.reset_letter_buffer() 
+            self.new_word_started = True
             self.current_suggestions = []
             self.current_state = "LETTER_DETECTION"
 
@@ -223,12 +241,16 @@ class ASLWordPredictor:
         print(f"Completed word: {word}")
         self.play_audio(word)
         self.collected_words.append(word)
+
+        self.reset_word_state()
+        self.new_word_started = True
         
         if len(self.collected_words) == self.target_word_count:
             self.generate_and_speak_sentence()
             self.collected_words = []
         
-        self.reset_word_state()
+        self.current_state = "LETTER_DETECTION"
+        self.last_detection_time = time.time()
 
     def reset_word_state(self):
         self.letter_buffer = []
@@ -255,43 +277,65 @@ class ASLWordPredictor:
                 temperature=0.7
             )
             
-            sentence = response.choices[0].message.content.strip()
-            print(f"Generated sentence: {sentence}")
-            self.play_audio(sentence)
+            self.sentence = response.choices[0].message.content.strip()
+            print(f"Generated sentence: {self.sentence}")
+            self.play_audio(self.sentence)
             self.sentence_played = True
             self.should_exit = True
-            return sentence
+            return self.sentence
             
         except Exception as e:
             print(f"Error generating sentence: {e}")
             return None
 
     def draw_interface(self, frame):
-        # Show current mode
-        cv2.putText(frame, f"Mode: {self.current_state}", 
-                    (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+        # Improved Display Parameters
+        margin = 10
+        box_color = (50, 50, 50)  # Dark gray background
+        text_color = (255, 255, 255)  # White text
+        header_color = (0, 255, 0)  # Green for headers
+        font_scale = 0.7
+        font_thickness = 2
         
-        # Show letter buffer
-        cv2.putText(frame, f"Letters: {''.join(self.letter_buffer)}", 
-                    (10, 160), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        # Calculate positions and dimensions dynamically
+        text_lines = [
+            f"Mode: {self.current_state}",
+            f"Letters: {''.join(self.letter_buffer)}",
+        ]
+
+        if self.current_state == "LETTER_DETECTION":
+            text_lines.append("Suggestions:")
+            text_lines.extend([f"{i+1}. {s}" for i, s in enumerate(self.possible_words)])
+            #text_lines.append("Accept(thumbs_up) or Reject(thumbs_down)")
         
-        # Show suggestions or possible words
         if self.current_state == "GESTURE_DETECTION":
-            cv2.putText(frame, "Suggestions:", 
-                       (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            for i, suggestion in enumerate(self.current_suggestions):
-                cv2.putText(frame, f"{suggestion}", 
-                           (10, 240 + i*40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(frame, "👍 Accept  👎 Reject", 
-                       (10, 320), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            text_lines.append("Suggestions:")
+            text_lines.extend([f"{i+1}. {s}" for i, s in enumerate(self.current_suggestions)])
+            text_lines.append("Accept(thumbs_up) or Reject(thumbs_down)")
         
-        # Show collected words
-        y_pos = 360
-        cv2.putText(frame, "Collected words:", 
-                    (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        for i, word in enumerate(self.collected_words):
-            cv2.putText(frame, f"{i+1}. {word}", 
-                       (10, y_pos + 30*(i+1)), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        text_lines.append("Collected words:")
+        text_lines.extend([f"{i+1}. {word}" for i, word in enumerate(self.collected_words)])
+
+        text_lines.append(f"Sentence Generated:{self.sentence}")
+        
+        # Calculate box size based on text
+        max_line_width = max([cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness)[0][0] for line in text_lines])
+        box_width = max_line_width + 2 * margin
+        box_height = len(text_lines) * (cv2.getTextSize('Text', cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness)[0][1] + margin) + margin
+        
+        # Draw the background box
+        start_x, start_y = 10, 10  # Top-left corner of the box
+        end_x, end_y = start_x + box_width, start_y + box_height
+        cv2.rectangle(frame, (start_x, start_y), (end_x, end_y), box_color, -1)  # Filled rectangle
+        
+        # Add text lines
+        current_y = start_y + margin
+        for line in text_lines:
+            if line.startswith("Mode") or line.startswith("Collected words") or line.startswith("Suggestions"):
+                cv2.putText(frame, line, (start_x + margin, current_y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, header_color, font_thickness)
+            else:
+                cv2.putText(frame, line, (start_x + margin, current_y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, text_color, font_thickness)
+            current_y += cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness)[0][1] + margin
 
     def is_pose_stable(self, current_letter):
         current_time = time.time()

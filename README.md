@@ -13,4 +13,4 @@ AI Models used:
 OpenAI GPT 4o-mini(Text Generation), ElevenLabs(Text to Speech), MediaPipe(Handmarks detection).
 
 
-External library ffmpeg added from https://ffmpeg.org/ - download the executable, add to the env path
+External library ffmpeg added from https://ffmpeg.org/ - download the executable, add to the env path.
